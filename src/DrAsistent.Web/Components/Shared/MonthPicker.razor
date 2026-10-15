@@ -1,0 +1,29 @@
+@attribute [AllowAnonymous]
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+    <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" OnClick="() => Shift(-1)" Size="Size.Small" />
+    <MudSelect T="int" Value="Month" ValueChanged="m => Changed.InvokeAsync((Year, m))" Dense="true" Style="width:130px" Margin="Margin.Dense">
+        @for (var m = 1; m <= 12; m++)
+        {
+            var value = m;
+            <MudSelectItem Value="value">@Names[value - 1]</MudSelectItem>
+        }
+    </MudSelect>
+    <MudNumericField T="int" Value="Year" ValueChanged="y => Changed.InvokeAsync((y, Month))" Min="2020" Max="2100" Style="width:90px" Margin="Margin.Dense" />
+    <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" OnClick="() => Shift(1)" Size="Size.Small" />
+</MudStack>
+
+@code {
+    public static readonly string[] Names =
+        ["Ianuarie", "Februarie", "Martie", "Aprilie", "Mai", "Iunie", "Iulie", "August", "Septembrie", "Octombrie", "Noiembrie", "Decembrie"];
+
+    [Parameter] public int Year { get; set; }
+    [Parameter] public int Month { get; set; }
+    [Parameter] public EventCallback<(int Year, int Month)> Changed { get; set; }
+
+    private Task Shift(int delta)
+    {
+        var d = new DateOnly(Year, Month, 1).AddMonths(delta);
+        return Changed.InvokeAsync((d.Year, d.Month));
+    }
+}

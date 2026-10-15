@@ -1,0 +1,407 @@
+@page "/"
+@implements IDisposable
+@inject ScheduleService Service
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+<PageTitle>Grafic</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mb-3">
+    <MudText Typo="Typo.h5">Grafic</MudText>
+    <MonthPicker Year="year" Month="month" Changed="OnMonthChangedAsync" />
+    @if (state is not null)
+    {
+        <MudChip T="string" Size="Size.Small">Normă @state.Problem.BaseNormHours h · @state.Problem.Calendar.WorkingDays(year, month) zile lucrătoare</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="@(dirty ? Color.Warning : Color.Default)">
+            @(dirty ? "Modificări nesalvate" : state.SavedAt is { } s ? $"Salvat {s.ToLocalTime():dd.MM.yyyy HH:mm}" : "Nesalvat")
+        </MudChip>
+    }
+</MudStack>
+
+@if (state is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else if (state.Problem.Employees.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">Nu există angajați activi. Adăugați-i în pagina <MudLink Href="angajati">Angajați</MudLink>.</MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-2 mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            @if (generating)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="Cancel" StartIcon="@Icons.Material.Filled.Stop">Oprește (păstrează cel mai bun rezultat)</MudButton>
+                <MudText Typo="Typo.body2">Se calculează... @elapsed s / @maxSeconds s</MudText>
+            }
+            else
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="GenerateAsync" StartIcon="@Icons.Material.Filled.AutoFixHigh">Generează</MudButton>
+            }
+            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="SaveAsync" Disabled="generating" StartIcon="@Icons.Material.Filled.Save">Salvează</MudButton>
+            <MudDivider Vertical="true" FlexItem="true" />
+            <MudButton Href="@($"export/{year}/{month}.xlsx")" Target="_blank" Disabled="@(dirty || state.SavedAt is null)" StartIcon="@Icons.Material.Filled.TableView">Excel</MudButton>
+            <MudButton Href="@($"export/{year}/{month}.pdf")" Target="_blank" Disabled="@(dirty || state.SavedAt is null)" StartIcon="@Icons.Material.Filled.PictureAsPdf">PDF</MudButton>
+            <MudSpacer />
+            <MudText Typo="Typo.body2">Click pe celulă pune:</MudText>
+            <MudToggleGroup T="string" @bind-Value="brush" Size="Size.Small" Color="Color.Primary" Outlined="true">
+                <MudToggleItem Value="@("Z")" Text="Z" />
+                <MudToggleItem Value="@("N")" Text="N" />
+                <MudToggleItem Value="@("Z8")" Text="Z8" />
+                <MudToggleItem Value="@("L")" Text="L" />
+                <MudToggleItem Value="@("unlock")" Text="Deblochează" />
+            </MudToggleGroup>
+            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Dense="true">
+                <MudMenuItem OnClick="ClearLocks">Deblochează toate celulele</MudMenuItem>
+                <MudMenuItem OnClick="ClearAsync">Golește graficul (păstrează concediile)</MudMenuItem>
+            </MudMenu>
+        </MudStack>
+        @if (generating)
+        {
+            <MudProgressLinear Color="Color.Primary" Value="@(100.0 * elapsed / Math.Max(1, maxSeconds))" Class="mt-2" />
+        }
+    </MudPaper>
+
+    <div class="grid-wrap">
+        <table class="schedule">
+            <thead>
+                <tr>
+                    <th class="name" rowspan="2">Nume</th>
+                    @for (var d = 0; d < days; d++)
+                    {
+                        <th class="@DayClass(d)" title="@HolidayTitle(d)">@(d + 1)</th>
+                    }
+                    <th rowspan="2">Lucrat</th>
+                    <th rowspan="2">Țintă</th>
+                    <th rowspan="2">Sold</th>
+                    <th rowspan="2" title="Ore de weekend / sărbători">W/S</th>
+                </tr>
+                <tr>
+                    @for (var d = 0; d < days; d++)
+                    {
+                        <th class="@DayClass(d)">@DrAsistent.Export.ScheduleDocument.DayLetter(state.Problem.Date(d))</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var group in state.Problem.Employees.GroupBy(e => e.Category))
+                {
+                    <tr class="group"><td class="name" colspan="@(days + 5)">@group.Key.Label()</td></tr>
+                    @foreach (var e in group)
+                    {
+                        var r = reports[e.Id];
+                        <tr>
+                            <td class="name">@e.Name</td>
+                            @for (var d = 0; d < days; d++)
+                            {
+                                var day = d;
+                                var code = state.Schedule.Get(e.Id, d);
+                                <td class="@CellClass(e, d, code)" @onclick="() => OnCellClick(e, day)">@(code == ShiftCode.L ? "" : code.ToString())</td>
+                            }
+                            <td class="num">@r.WorkedHours</td>
+                            <td class="num" title="Normă @r.BaseNormHours - @r.LeaveWorkingDays zile CO/CM x 8 - report @r.CarryIn">@r.TargetHours</td>
+                            <td class="num @(r.Balance != 0 ? "warn" : "")">@r.Balance.ToString("+0;-0;0")</td>
+                            <td class="num">@r.SpecialHours</td>
+                        </tr>
+                    }
+                }
+                @foreach (var rule in state.Problem.Coverage)
+                {
+                    <tr class="coverage">
+                        <td class="name">@rule.Categories.Label() · @(rule.Shift == WorkShift.Z ? "zi" : "noapte") (@rule.MinRequired/@rule.Desired)</td>
+                        @for (var d = 0; d < days; d++)
+                        {
+                            var count = Coverage(rule, d);
+                            <td class="@(count < rule.MinRequired ? "miss-hard" : count < rule.Desired ? "miss-soft" : "")">@count</td>
+                        }
+                        <td colspan="4"></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="legend mt-2">
+        <span class="c-Z" style="background:#FFF4CC">Z zi 07-19</span>
+        <span style="background:#BDD7EE">N noapte 19-07</span>
+        <span style="background:#FFE699">Z8 tură scurtă 07-15</span>
+        <span style="background:#C6EFCE">CO</span>
+        <span style="background:#F8CBAD">CM</span>
+        <span style="background:#ececec">weekend</span>
+        <span style="background:#ffd9d9">sărbătoare legală</span>
+        <span>● fixată manual (păstrată la regenerare)</span>
+    </div>
+
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-3">
+                <MudText Typo="Typo.h6" Class="mb-2">Verificare reguli</MudText>
+                @{
+                    var hard = violations.Where(v => v.Severity == ViolationSeverity.Hard).ToList();
+                    var soft = violations.Where(v => v.Severity == ViolationSeverity.Soft).ToList();
+                }
+                @if (hard.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Success" Dense="true" Class="mb-2">Toate regulile obligatorii sunt respectate.</MudAlert>
+                }
+                else
+                {
+                    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">@hard.Count încălcări ale regulilor obligatorii</MudAlert>
+                    <MudList T="string" Dense="true">
+                        @foreach (var v in hard.Take(50))
+                        {
+                            <MudListItem T="string" Icon="@Icons.Material.Filled.Error" IconColor="Color.Error">
+                                @(v.Date is { } dt ? $"{dt:dd.MM}: " : "")<b>@v.Rule</b> · @v.Message
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+                @if (soft.Count > 0)
+                {
+                    <MudExpansionPanels Dense="true" Elevation="0">
+                        <MudExpansionPanel Text="@($"{soft.Count} recomandări neîndeplinite (SOFT)")">
+                            @foreach (var v in soft)
+                            {
+                                <MudText Typo="Typo.body2">• @(v.Date is { } dt ? $"{dt:dd.MM}: " : "")<b>@v.Rule</b> · @v.Message</MudText>
+                            }
+                        </MudExpansionPanel>
+                    </MudExpansionPanels>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-3">
+                <MudText Typo="Typo.h6" Class="mb-2">Echitate ore weekend / sărbători</MudText>
+                <MudSimpleTable Dense="true">
+                    <thead><tr><th>Categorie</th><th>Medie</th><th>Min</th><th>Max</th><th>Diferență*</th></tr></thead>
+                    <tbody>
+                        @foreach (var mask in state.Problem.EquityGroups)
+                        {
+                            var g = reports.Values.Where(r => r.TargetHours > 0 && mask.HasFlag(r.Employee.Category.ToMask())).ToList();
+                            if (g.Count == 0) continue;
+                            var spread = g.Max(r => r.NormalizedSpecialHours) - g.Min(r => r.NormalizedSpecialHours);
+                            <tr>
+                                <td>@mask.Label()</td>
+                                <td>@g.Average(r => r.SpecialHours).ToString("0.#")</td>
+                                <td>@g.Min(r => r.SpecialHours)</td>
+                                <td>@g.Max(r => r.SpecialHours)</td>
+                                <td style="@(spread > ScheduleValidator.EquityToleranceHours + 0.5 ? "color:#c62828;font-weight:600" : "")">@spread.ToString("0.#") h</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                <MudText Typo="Typo.caption">* raportat la normă întreagă, ca angajații cu concediu să fie comparați proporțional. Toleranță ±@ScheduleValidator.EquityToleranceHours h.</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12">
+            <MudPaper Class="pa-3">
+                <MudText Typo="Typo.h6" Class="mb-2">Raport per angajat</MudText>
+                <MudSimpleTable Dense="true" Hover="true">
+                    <thead>
+                        <tr>
+                            <th>Nume</th><th>Categorie</th><th>Normă</th><th>Zile CO/CM</th><th>Report</th><th>Țintă</th><th>Lucrat</th><th>Sold</th>
+                            <th>Ore W/S</th><th>Ture Z</th><th>Ture N</th><th>Ture Z8</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in reports.Values)
+                        {
+                            <tr>
+                                <td>@r.Employee.Name</td>
+                                <td>@r.Employee.Category.Label()</td>
+                                <td>@r.BaseNormHours</td>
+                                <td>@r.LeaveWorkingDays</td>
+                                <td>@r.CarryIn.ToString("+0;-0;0")</td>
+                                <td>@r.TargetHours</td>
+                                <td>@r.WorkedHours</td>
+                                <td style="@(r.Balance != 0 ? "color:#ef6c00;font-weight:600" : "")">@r.Balance.ToString("+0;-0;0")</td>
+                                <td>@r.SpecialHours</td>
+                                <td>@r.DayShifts</td>
+                                <td>@r.NightShifts</td>
+                                <td>@r.ShortShifts</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private int year = DateTime.Today.AddMonths(1).Year;
+    private int month = DateTime.Today.AddMonths(1).Month;
+    private ScheduleState? state;
+    private IReadOnlyList<Violation> violations = [];
+    private Dictionary<int, EmployeeReport> reports = new();
+    private HashSet<(int, DateOnly)> violationCells = [];
+    private bool dirty;
+    private bool generating;
+    private int elapsed;
+    private int maxSeconds;
+    private string brush = "Z";
+    private CancellationTokenSource? cts;
+    private System.Threading.Timer? timer;
+
+    private int days => state?.Problem.DaysInMonth ?? 0;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task OnMonthChangedAsync((int Year, int Month) value)
+    {
+        if (dirty)
+        {
+            var ok = await Dialogs.ShowMessageBoxAsync("Modificări nesalvate", "Graficul are modificări nesalvate. Schimbați luna fără să salvați?", yesText: "Da", cancelText: "Nu");
+            if (ok != true) return;
+        }
+        (year, month) = value;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        state = null;
+        StateHasChanged();
+        state = await Service.LoadAsync(year, month);
+        dirty = false;
+        Recalculate();
+    }
+
+    private void Recalculate()
+    {
+        if (state is null) return;
+        violations = ScheduleValidator.Validate(state.Problem, state.Schedule);
+        reports = ScheduleValidator.Report(state.Problem, state.Schedule).ToDictionary(r => r.Employee.Id);
+        violationCells = violations
+            .Where(v => v.Severity == ViolationSeverity.Hard && v.EmployeeId is not null && v.Date is not null)
+            .Select(v => (v.EmployeeId!.Value, v.Date!.Value)).ToHashSet();
+    }
+
+    private int Coverage(CoverageRule rule, int d) =>
+        state!.Problem.Employees.Count(e => rule.Categories.HasFlag(e.Category.ToMask()) && state.Problem.Counts(rule, state.Schedule.Get(e.Id, d)));
+
+    private string DayClass(int d)
+    {
+        var date = state!.Problem.Date(d);
+        return state.Problem.Calendar.IsHoliday(date) ? "holiday" : WorkCalendar.IsWeekend(date) ? "special" : "";
+    }
+
+    private string? HolidayTitle(int d) =>
+        state!.Problem.Calendar.IsHoliday(state.Problem.Date(d)) ? "Sărbătoare legală" : null;
+
+    private bool IsForced(Employee e, int d) => state!.Problem.LeaveCode(e.Id, state.Problem.Date(d)) is not null;
+
+    private string CellClass(Employee e, int d, ShiftCode code)
+    {
+        var cls = $"cell c-{code} {DayClass(d)}";
+        if (IsForced(e, d)) cls += " readonly";
+        if (state!.Locked.Contains((e.Id, d))) cls += " locked";
+        if (violationCells.Contains((e.Id, state.Problem.Date(d)))) cls += " violation";
+        return cls;
+    }
+
+    private void OnCellClick(Employee e, int d)
+    {
+        if (state is null || generating) return;
+        if (IsForced(e, d))
+        {
+            Snackbar.Add("Zi de concediu – se modifică din pagina Concedii", Severity.Info);
+            return;
+        }
+        if (brush == "unlock")
+        {
+            state.Locked.Remove((e.Id, d));
+            return;
+        }
+        var code = Enum.Parse<ShiftCode>(brush);
+        if (code == ShiftCode.N && !e.Category.CanWorkNights())
+        {
+            Snackbar.Add("Îngrijitoarele nu fac ture de noapte", Severity.Warning);
+            return;
+        }
+        state.Schedule.Row(e.Id)[d] = code;
+        state.Locked.Add((e.Id, d));
+        dirty = true;
+        Recalculate();
+    }
+
+    private void ClearLocks()
+    {
+        state?.Locked.Clear();
+        dirty = true;
+    }
+
+    private async Task ClearAsync()
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync("Golire grafic", "Ștergeți toate turele din această lună? Concediile rămân.", yesText: "Golește", cancelText: "Renunță");
+        if (ok != true || state is null) return;
+        foreach (var e in state.Problem.Employees)
+        {
+            var row = state.Schedule.Row(e.Id);
+            for (var d = 0; d < row.Length; d++)
+                row[d] = state.Problem.LeaveCode(e.Id, state.Problem.Date(d)) ?? ShiftCode.L;
+        }
+        state.Locked.Clear();
+        dirty = true;
+        Recalculate();
+    }
+
+    private async Task GenerateAsync()
+    {
+        if (state is null) return;
+        generating = true;
+        elapsed = 0;
+        maxSeconds = await Service.SolverSecondsAsync();
+        cts = new CancellationTokenSource();
+        timer = new System.Threading.Timer(_ => InvokeAsync(() => { elapsed++; StateHasChanged(); }), null, 1000, 1000);
+        try
+        {
+            var result = await Service.GenerateAsync(state, cts.Token);
+            if (result.Success && result.Schedule is not null)
+            {
+                state.Schedule = result.Schedule;
+                dirty = true;
+                Recalculate();
+                var hard = violations.Count(v => v.Severity == ViolationSeverity.Hard);
+                Snackbar.Add(hard == 0
+                    ? $"Grafic generat ({result.Status}, {result.WallSeconds:0}s). Verificați și salvați."
+                    : $"Grafic generat, dar cu {hard} probleme de acoperire – personal insuficient. Vedeți lista de verificare.",
+                    hard == 0 ? Severity.Success : Severity.Warning);
+            }
+            else
+            {
+                Snackbar.Add($"Nu s-a găsit un grafic ({result.Status}). Verificați celulele fixate manual.", Severity.Error);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Snackbar.Add("Generare oprită", Severity.Info);
+        }
+        finally
+        {
+            timer?.Dispose();
+            timer = null;
+            generating = false;
+        }
+    }
+
+    private void Cancel() => cts?.Cancel();
+
+    private async Task SaveAsync()
+    {
+        if (state is null) return;
+        var user = (await AuthState).User.Identity?.Name;
+        await Service.SaveAsync(state, user);
+        dirty = false;
+        Snackbar.Add("Grafic salvat", Severity.Success);
+    }
+
+    public void Dispose()
+    {
+        cts?.Cancel();
+        timer?.Dispose();
+    }
+}

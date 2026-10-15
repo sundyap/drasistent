@@ -1,0 +1,49 @@
+@inherits LayoutComponentBase
+
+<MudThemeProvider Theme="theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => drawerOpen = !drawerOpen" />
+        <MudText Typo="Typo.h6" Class="ml-2">Grafic de lucru</MudText>
+        <MudSpacer />
+        <AuthorizeView>
+            <MudText Typo="Typo.body2" Class="mr-3">@context.User.Identity?.Name</MudText>
+        </AuthorizeView>
+        <form action="account/logout" method="post">
+            <AntiforgeryToken />
+            <MudButton ButtonType="ButtonType.Submit" Color="Color.Inherit" StartIcon="@Icons.Material.Filled.Logout">Ieșire</MudButton>
+        </form>
+    </MudAppBar>
+    <MudDrawer @bind-Open="drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="1" Variant="DrawerVariant.Responsive">
+        <MudNavMenu>
+            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.CalendarMonth">Grafic</MudNavLink>
+            <MudNavLink Href="angajati" Icon="@Icons.Material.Filled.People">Angajați</MudNavLink>
+            <MudNavLink Href="concedii" Icon="@Icons.Material.Filled.BeachAccess">Concedii CO / CM</MudNavLink>
+            <MudNavLink Href="sarbatori" Icon="@Icons.Material.Filled.Celebration">Sărbători legale</MudNavLink>
+            <MudNavLink Href="setari" Icon="@Icons.Material.Filled.Settings">Setări</MudNavLink>
+            <MudNavLink Href="utilizatori" Icon="@Icons.Material.Filled.ManageAccounts">Utilizatori</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+    <MudMainContent Class="pa-4">
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    A apărut o eroare neașteptată.
+    <a href="." class="reload">Reîncarcă</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool drawerOpen = true;
+
+    private readonly MudTheme theme = new()
+    {
+        PaletteLight = new PaletteLight { Primary = "#1F5F8B", AppbarBackground = "#1F5F8B" },
+    };
+}

@@ -1,0 +1,70 @@
+@page "/account/login"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@inject SignInManager<ApplicationUser> SignIn
+@inject NavigationManager Nav
+@using Microsoft.AspNetCore.Identity
+
+<PageTitle>Autentificare</PageTitle>
+
+<div class="login-card">
+    <h1>Grafic de lucru</h1>
+    <p class="muted">Autentificare</p>
+
+    @if (error is not null)
+    {
+        <div class="login-error">@error</div>
+    }
+
+    <EditForm Model="Input" method="post" OnValidSubmit="LoginAsync" FormName="login">
+        <DataAnnotationsValidator />
+        <label>Utilizator
+            <InputText @bind-Value="Input.UserName" autocomplete="username" autofocus />
+        </label>
+        <label>Parolă
+            <InputText type="password" @bind-Value="Input.Password" autocomplete="current-password" />
+        </label>
+        <label class="inline">
+            <InputCheckbox @bind-Value="Input.RememberMe" /> Ține-mă minte
+        </label>
+        <button type="submit">Intră</button>
+    </EditForm>
+</div>
+
+@code {
+    private string? error;
+
+    protected override void OnInitialized() => Input ??= new();
+
+    [SupplyParameterFromForm]
+    private LoginInput Input { get; set; } = default!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private async Task LoginAsync()
+    {
+        var result = await SignIn.PasswordSignInAsync(Input.UserName, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        if (result.Succeeded)
+        {
+            var target = string.IsNullOrEmpty(ReturnUrl) || ReturnUrl.Contains("account/") || ReturnUrl.Contains("://") ? "" : ReturnUrl;
+            Nav.NavigateTo("/" + target.TrimStart('/'), forceLoad: true);
+            return;
+        }
+        error = result.IsLockedOut
+            ? "Cont blocat temporar după prea multe încercări. Reîncercați peste câteva minute."
+            : "Utilizator sau parolă greșită.";
+    }
+
+    private sealed class LoginInput
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Introduceți utilizatorul")]
+        public string UserName { get; set; } = "";
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Introduceți parola")]
+        public string Password { get; set; } = "";
+
+        public bool RememberMe { get; set; }
+    }
+}

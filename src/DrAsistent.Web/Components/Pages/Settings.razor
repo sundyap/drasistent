@@ -1,0 +1,92 @@
+@page "/setari"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Setări</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Setări</MudText>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudText Typo="Typo.h6" Class="mb-2">Acoperire minimă pe secție</MudText>
+    <MudText Typo="Typo.body2" Class="mb-3">
+        <b>Minim</b> = obligatoriu (HARD); <b>Dorit</b> = se încearcă dacă există personal (SOFT).
+    </MudText>
+    <MudSimpleTable Dense="true">
+        <thead><tr><th>Tura</th><th>Categorii care se numără</th><th>Minim</th><th>Dorit</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var r in rules)
+            {
+                <tr>
+                    <td style="width:140px">
+                        <MudSelect T="WorkShift" @bind-Value="r.Shift" Margin="Margin.Dense">
+                            <MudSelectItem Value="WorkShift.Z">Zi (07-19)</MudSelectItem>
+                            <MudSelectItem Value="WorkShift.N">Noapte (19-07)</MudSelectItem>
+                        </MudSelect>
+                    </td>
+                    <td>
+                        <MudStack Row="true" Spacing="0">
+                            @foreach (var c in new[] { CategoryMask.Asistent, CategoryMask.Infirmier, CategoryMask.Ingrijitor })
+                            {
+                                var flag = c;
+                                <MudCheckBox T="bool" Value="r.Categories.HasFlag(flag)" ValueChanged="v => Toggle(r, flag, v)" Label="@flag.Label()" Dense="true" />
+                            }
+                        </MudStack>
+                    </td>
+                    <td style="width:90px"><MudNumericField @bind-Value="r.MinRequired" Min="0" Max="20" Margin="Margin.Dense" /></td>
+                    <td style="width:90px"><MudNumericField @bind-Value="r.Desired" Min="0" Max="20" Margin="Margin.Dense" /></td>
+                    <td><MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="() => rules.Remove(r)" /></td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+    <MudButton Class="mt-2" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => rules.Add(new CoverageRuleEntity { Shift = WorkShift.Z, Categories = CategoryMask.Asistent, MinRequired = 1, Desired = 1 }))">Adaugă regulă</MudButton>
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudText Typo="Typo.h6" Class="mb-2">Generare</MudText>
+    <MudSwitch T="bool" @bind-Value="settings.ShortShiftCountsForDayCoverage" Color="Color.Primary"
+               Label="Tura scurtă (Z8, 07-15) se numără la acoperirea minimă de zi" />
+    <MudText Typo="Typo.caption" Class="d-block mb-3">
+        Dacă e dezactivat, Z8 se pune doar peste personalul minim, pentru că între 15 și 19 persoana respectivă lipsește.
+    </MudText>
+    <MudNumericField @bind-Value="settings.SolverSeconds" Label="Timp maxim de calcul (secunde)" Min="10" Max="600" Style="width:260px" />
+    <MudText Typo="Typo.caption" Class="d-block">Mai mult timp = grafic mai echilibrat. 60 de secunde sunt suficiente de obicei.</MudText>
+</MudPaper>
+
+<MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync" StartIcon="@Icons.Material.Filled.Save">Salvează setările</MudButton>
+
+@code {
+    private List<CoverageRuleEntity> rules = [];
+    private AppSettingsEntity settings = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        rules = await db.CoverageRules.AsNoTracking().OrderBy(r => r.Shift).ThenBy(r => r.Id).ToListAsync();
+        settings = await db.Settings.AsNoTracking().FirstOrDefaultAsync() ?? new AppSettingsEntity();
+    }
+
+    private static void Toggle(CoverageRuleEntity r, CategoryMask flag, bool on) =>
+        r.Categories = on ? r.Categories | flag : r.Categories & ~flag;
+
+    private async Task SaveAsync()
+    {
+        foreach (var r in rules)
+        {
+            if (r.Categories == CategoryMask.None) { Snackbar.Add("Fiecare regulă trebuie să aibă cel puțin o categorie", Severity.Warning); return; }
+            if (r.Shift == WorkShift.N && r.Categories == CategoryMask.Ingrijitor) { Snackbar.Add("Îngrijitoarele nu fac ture de noapte", Severity.Warning); return; }
+            if (r.Desired < r.MinRequired) r.Desired = r.MinRequired;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.CoverageRules.RemoveRange(await db.CoverageRules.ToListAsync());
+        db.CoverageRules.AddRange(rules.Select(r => new CoverageRuleEntity
+        {
+            Shift = r.Shift, Categories = r.Categories, MinRequired = r.MinRequired, Desired = r.Desired,
+        }));
+        db.Settings.Update(settings);
+        await db.SaveChangesAsync();
+        Snackbar.Add("Setări salvate", Severity.Success);
+        await OnInitializedAsync();
+    }
+}

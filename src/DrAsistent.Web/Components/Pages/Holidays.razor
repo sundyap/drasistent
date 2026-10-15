@@ -1,0 +1,114 @@
+@page "/sarbatori"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Sărbători legale</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Sărbători legale</MudText>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudStack Row="true" AlignItems="AlignItems.End" Wrap="Wrap.Wrap">
+        <MudNumericField T="int" Value="year" ValueChanged="OnYearChanged" Label="An" Min="2020" Max="2100" Style="width:110px" />
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="LoadRomanianAsync" StartIcon="@Icons.Material.Filled.Download">
+            Adaugă sărbătorile legale din România pentru @year
+        </MudButton>
+    </MudStack>
+    <MudStack Row="true" AlignItems="AlignItems.End" Wrap="Wrap.Wrap" Class="mt-3">
+        <MudDatePicker @bind-Date="newDate" Label="Dată" DateFormat="dd.MM.yyyy" Style="width:150px" />
+        <MudTextField @bind-Value="newName" Label="Denumire" Style="min-width:260px" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddAsync">Adaugă</MudButton>
+    </MudStack>
+</MudPaper>
+
+<MudPaper Class="pa-2">
+    <MudSimpleTable Dense="true" Hover="true">
+        <thead><tr><th>Dată</th><th>Zi</th><th>Denumire</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var h in holidays)
+            {
+                <tr>
+                    <td>@h.Date.ToString("dd.MM.yyyy")</td>
+                    <td>@h.Date.ToString("dddd", System.Globalization.CultureInfo.GetCultureInfo("ro-RO"))</td>
+                    <td>@h.Name</td>
+                    <td><MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="() => DeleteAsync(h)" /></td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+    @if (holidays.Count == 0)
+    {
+        <MudText Class="pa-4" Color="Color.Secondary">Nu există sărbători introduse pentru @year.</MudText>
+    }
+</MudPaper>
+
+<MudText Typo="Typo.caption" Class="mt-2 d-block">
+    Lista propusă urmează Codul Muncii (art. 139). Verificați-o la începutul anului, în caz că legea s-a modificat.
+</MudText>
+
+@code {
+    private int year = DateTime.Today.Year;
+    private List<HolidayEntity> holidays = [];
+    private DateTime? newDate;
+    private string newName = "";
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task OnYearChanged(int y)
+    {
+        year = y;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var first = new DateOnly(year, 1, 1);
+        var last = new DateOnly(year, 12, 31);
+        holidays = await db.Holidays.AsNoTracking().Where(h => h.Date >= first && h.Date <= last).OrderBy(h => h.Date).ToListAsync();
+    }
+
+    private async Task LoadRomanianAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var existing = holidays.Select(h => h.Date).ToHashSet();
+        var added = 0;
+        foreach (var (date, name) in RomanianHolidays.For(year).Where(h => !existing.Contains(h.Date)))
+        {
+            db.Holidays.Add(new HolidayEntity { Date = date, Name = name });
+            added++;
+        }
+        await db.SaveChangesAsync();
+        Snackbar.Add(added == 0 ? "Toate sărbătorile erau deja introduse" : $"Au fost adăugate {added} sărbători", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task AddAsync()
+    {
+        if (newDate is null || string.IsNullOrWhiteSpace(newName))
+        {
+            Snackbar.Add("Completați data și denumirea", Severity.Warning);
+            return;
+        }
+        var date = DateOnly.FromDateTime(newDate.Value);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (await db.Holidays.AnyAsync(h => h.Date == date))
+        {
+            Snackbar.Add("Există deja o sărbătoare la această dată", Severity.Warning);
+            return;
+        }
+        db.Holidays.Add(new HolidayEntity { Date = date, Name = newName.Trim() });
+        await db.SaveChangesAsync();
+        newDate = null;
+        newName = "";
+        year = date.Year;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(HolidayEntity h)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Holidays.Remove(new HolidayEntity { Id = h.Id });
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}

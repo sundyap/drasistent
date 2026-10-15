@@ -1,0 +1,155 @@
+@page "/concedii"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>Concedii</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Concedii de odihnă (CO) și medicale (CM)</MudText>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudStack Row="true" AlignItems="AlignItems.End" Wrap="Wrap.Wrap">
+        <MudSelect T="int" @bind-Value="newEmployeeId" Label="Angajat" Style="min-width:260px">
+            @foreach (var e in employees)
+            {
+                <MudSelectItem Value="e.Id">@e.Name (@e.Category.Label())</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="LeaveType" @bind-Value="newType" Label="Tip" Style="width:120px">
+            <MudSelectItem Value="LeaveType.CO">CO</MudSelectItem>
+            <MudSelectItem Value="LeaveType.CM">CM</MudSelectItem>
+        </MudSelect>
+        <MudDatePicker @bind-Date="newStart" Label="De la" DateFormat="dd.MM.yyyy" Style="width:150px" />
+        <MudDatePicker @bind-Date="newEnd" Label="Până la (inclusiv)" DateFormat="dd.MM.yyyy" Style="width:170px" />
+        <MudTextField @bind-Value="newNote" Label="Observații" Style="min-width:200px" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddAsync">Adaugă</MudButton>
+    </MudStack>
+    @if (newStart is not null && newEnd is not null && newEnd >= newStart)
+    {
+        <MudText Typo="Typo.body2" Class="mt-2">
+            Zile lucrătoare consumate: <b>@WorkingDays(DateOnly.FromDateTime(newStart.Value), DateOnly.FromDateTime(newEnd.Value))</b>
+            (weekendurile și sărbătorile legale nu se scad)
+        </MudText>
+    }
+</MudPaper>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+    <MudText>Afișează concediile din</MudText>
+    <MonthPicker Year="year" Month="month" Changed="OnMonthChanged" />
+</MudStack>
+
+<MudPaper Class="pa-2">
+    <MudSimpleTable Dense="true" Hover="true">
+        <thead>
+            <tr><th>Angajat</th><th>Tip</th><th>De la</th><th>Până la</th><th>Zile lucrătoare</th><th>Observații</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var l in leaves)
+            {
+                <tr>
+                    <td>@l.Employee?.Name</td>
+                    <td><MudChip T="string" Size="Size.Small" Color="@(l.Type == LeaveType.CO ? Color.Success : Color.Warning)">@l.Type</MudChip></td>
+                    <td>@l.Start.ToString("dd.MM.yyyy")</td>
+                    <td>@l.End.ToString("dd.MM.yyyy")</td>
+                    <td>@WorkingDays(l.Start, l.End)</td>
+                    <td>@l.Note</td>
+                    <td><MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="() => DeleteAsync(l)" /></td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+    @if (leaves.Count == 0)
+    {
+        <MudText Class="pa-4" Color="Color.Secondary">Nu există concedii în această lună.</MudText>
+    }
+</MudPaper>
+
+<MudText Typo="Typo.caption" Class="mt-2 d-block">
+    După modificarea concediilor, regenerați sau verificați graficul lunii respective.
+</MudText>
+
+@code {
+    private List<EmployeeEntity> employees = [];
+    private List<LeaveEntity> leaves = [];
+    private HashSet<DateOnly> holidays = [];
+    private int year = DateTime.Today.AddMonths(1).Year;
+    private int month = DateTime.Today.AddMonths(1).Month;
+
+    private int newEmployeeId;
+    private LeaveType newType = LeaveType.CO;
+    private DateTime? newStart;
+    private DateTime? newEnd;
+    private string? newNote;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        employees = await db.Employees.AsNoTracking().Where(e => e.IsActive)
+            .OrderBy(e => e.Category).ThenBy(e => e.SortOrder).ThenBy(e => e.Name).ToListAsync();
+        holidays = (await db.Holidays.AsNoTracking().Select(h => h.Date).ToListAsync()).ToHashSet();
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged((int Year, int Month) value)
+    {
+        (year, month) = value;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var first = new DateOnly(year, month, 1);
+        var last = first.AddMonths(1).AddDays(-1);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        leaves = await db.Leaves.AsNoTracking().Include(l => l.Employee)
+            .Where(l => l.Start <= last && l.End >= first)
+            .OrderBy(l => l.Start).ThenBy(l => l.Employee!.Name).ToListAsync();
+    }
+
+    private int WorkingDays(DateOnly start, DateOnly end)
+    {
+        var cal = new WorkCalendar(holidays);
+        var n = 0;
+        for (var d = start; d <= end; d = d.AddDays(1))
+            if (cal.IsWorkingDay(d)) n++;
+        return n;
+    }
+
+    private async Task AddAsync()
+    {
+        if (newEmployeeId == 0 || newStart is null || newEnd is null)
+        {
+            Snackbar.Add("Completați angajatul și perioada", Severity.Warning);
+            return;
+        }
+        var start = DateOnly.FromDateTime(newStart.Value);
+        var end = DateOnly.FromDateTime(newEnd.Value);
+        if (end < start)
+        {
+            Snackbar.Add("Data de sfârșit este înaintea celei de început", Severity.Warning);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var overlap = await db.Leaves.AnyAsync(l => l.EmployeeId == newEmployeeId && l.Start <= end && l.End >= start);
+        if (overlap)
+        {
+            Snackbar.Add("Angajatul are deja un concediu care se suprapune cu această perioadă", Severity.Warning);
+            return;
+        }
+        db.Leaves.Add(new LeaveEntity { EmployeeId = newEmployeeId, Type = newType, Start = start, End = end, Note = newNote });
+        await db.SaveChangesAsync();
+        Snackbar.Add("Concediu adăugat", Severity.Success);
+        newStart = newEnd = null;
+        newNote = null;
+        (year, month) = (start.Year, start.Month);
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(LeaveEntity l)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Leaves.Remove(new LeaveEntity { Id = l.Id });
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}

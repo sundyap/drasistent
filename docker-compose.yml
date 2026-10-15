@@ -1,0 +1,19 @@
+# Proiect pentru Arcane. Conexiunea la SQL Server se da complet prin DB_CONNECTION.
+# Variabilele se completeaza in Arcane (fisierul .env al proiectului) - vezi .env.example.
+services:
+  drasistent:
+    # imaginea construita de GitHub Actions (vezi README) sau local cu: docker build -t drasistent:latest .
+    image: ${IMAGE:-drasistent:latest}
+    container_name: drasistent
+    restart: unless-stopped
+    environment:
+      ConnectionStrings__Default: ${DB_CONNECTION:?Completati DB_CONNECTION in .env}
+      Admin__User: ${ADMIN_USER:-admin}
+      Admin__Password: ${ADMIN_PASSWORD}
+      Department__Name: ${DEPARTMENT_NAME:-Grafic de lucru}
+      TZ: Europe/Bucharest
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    # permite Server=host.docker.internal,1433 (portul publicat de SQLSERVER1 pe host)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

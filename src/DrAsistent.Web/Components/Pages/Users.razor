@@ -1,0 +1,96 @@
+@page "/utilizatori"
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<ApplicationUser> UserManager
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+<PageTitle>Utilizatori</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Utilizatori</MudText>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudText Typo="Typo.h6" Class="mb-2">Cont nou</MudText>
+    <MudStack Row="true" AlignItems="AlignItems.End" Wrap="Wrap.Wrap">
+        <MudTextField @bind-Value="newUser" Label="Utilizator" Style="min-width:220px" />
+        <MudTextField @bind-Value="newPassword" Label="Parolă (minim 8 caractere, cu cifră și literă mare)" InputType="InputType.Password" Style="min-width:320px" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddAsync">Creează</MudButton>
+    </MudStack>
+</MudPaper>
+
+<MudPaper Class="pa-2 mb-4">
+    <MudSimpleTable Dense="true">
+        <thead><tr><th>Utilizator</th><th>Parolă nouă</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var u in users)
+            {
+                <tr>
+                    <td>@u.UserName @(u.UserName == currentUser ? "(dvs.)" : "")</td>
+                    <td style="width:320px">
+                        <MudTextField T="string" Value="@(resetPasswords.GetValueOrDefault(u.Id) ?? "")" ValueChanged="v => resetPasswords[u.Id] = v" InputType="InputType.Password" Margin="Margin.Dense" />
+                    </td>
+                    <td style="white-space:nowrap">
+                        <MudButton Size="Size.Small" OnClick="() => ResetAsync(u)">Schimbă parola</MudButton>
+                        @if (u.UserName != currentUser)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small" OnClick="() => DeleteAsync(u)" />
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+</MudPaper>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private List<ApplicationUser> users = [];
+    private readonly Dictionary<string, string> resetPasswords = new();
+    private string? currentUser;
+    private string newUser = "";
+    private string newPassword = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUser = (await AuthState).User.Identity?.Name;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() =>
+        users = await UserManager.Users.AsNoTracking().OrderBy(u => u.UserName).ToListAsync();
+
+    private void Report(IdentityResult result, string success)
+    {
+        if (result.Succeeded) Snackbar.Add(success, Severity.Success);
+        else Snackbar.Add(string.Join(" ", result.Errors.Select(e => e.Description)), Severity.Error);
+    }
+
+    private async Task AddAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newUser) || string.IsNullOrEmpty(newPassword)) return;
+        var result = await UserManager.CreateAsync(new ApplicationUser { UserName = newUser.Trim() }, newPassword);
+        Report(result, "Cont creat");
+        if (result.Succeeded) { newUser = ""; newPassword = ""; }
+        await LoadAsync();
+    }
+
+    private async Task ResetAsync(ApplicationUser u)
+    {
+        var password = resetPasswords.GetValueOrDefault(u.Id);
+        if (string.IsNullOrEmpty(password)) { Snackbar.Add("Introduceți parola nouă", Severity.Warning); return; }
+        var user = await UserManager.FindByIdAsync(u.Id);
+        if (user is null) return;
+        var token = await UserManager.GeneratePasswordResetTokenAsync(user);
+        Report(await UserManager.ResetPasswordAsync(user, token, password), "Parola a fost schimbată");
+        resetPasswords.Remove(u.Id);
+    }
+
+    private async Task DeleteAsync(ApplicationUser u)
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync("Ștergere cont", $"Ștergeți contul {u.UserName}?", yesText: "Șterge", cancelText: "Renunță");
+        if (ok != true) return;
+        var user = await UserManager.FindByIdAsync(u.Id);
+        if (user is not null) Report(await UserManager.DeleteAsync(user), "Cont șters");
+        await LoadAsync();
+    }
+}

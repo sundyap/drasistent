@@ -1,0 +1,113 @@
+@page "/angajati"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+
+<PageTitle>Angajați</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-4">Angajați</MudText>
+
+<MudPaper Class="pa-4 mb-4">
+    <MudStack Row="true" AlignItems="AlignItems.End" Wrap="Wrap.Wrap">
+        <MudTextField @bind-Value="newName" Label="Nume și prenume" Style="min-width:280px" Immediate="true" />
+        <MudSelect T="StaffCategory" @bind-Value="newCategory" Label="Categorie" Style="min-width:200px">
+            @foreach (var c in Enum.GetValues<StaffCategory>())
+            {
+                <MudSelectItem Value="c">@c.Label()</MudSelectItem>
+            }
+        </MudSelect>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddAsync" Disabled="string.IsNullOrWhiteSpace(newName)">Adaugă</MudButton>
+    </MudStack>
+</MudPaper>
+
+<MudPaper Class="pa-2">
+    <MudSimpleTable Dense="true" Hover="true">
+        <thead>
+            <tr>
+                <th>Ordine</th>
+                <th>Nume</th>
+                <th>Categorie</th>
+                <th>Activ</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var e in employees)
+            {
+                <tr>
+                    <td style="width:90px"><MudNumericField @bind-Value="e.SortOrder" Variant="Variant.Text" Margin="Margin.Dense" /></td>
+                    <td><MudTextField @bind-Value="e.Name" Margin="Margin.Dense" /></td>
+                    <td style="width:200px">
+                        <MudSelect T="StaffCategory" @bind-Value="e.Category" Margin="Margin.Dense">
+                            @foreach (var c in Enum.GetValues<StaffCategory>())
+                            {
+                                <MudSelectItem Value="c">@c.Label()</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </td>
+                    <td><MudSwitch T="bool" @bind-Value="e.IsActive" Color="Color.Primary" /></td>
+                    <td style="white-space:nowrap">
+                        <MudIconButton Icon="@Icons.Material.Filled.Save" Color="Color.Primary" OnClick="() => SaveAsync(e)" title="Salvează" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" OnClick="() => DeleteAsync(e)" title="Șterge" />
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+    @if (employees.Count == 0)
+    {
+        <MudText Class="pa-4" Color="Color.Secondary">Nu există angajați. Adăugați-i mai sus.</MudText>
+    }
+</MudPaper>
+
+<MudText Typo="Typo.caption" Class="mt-2 d-block">
+    Angajații inactivi nu mai apar în graficele noi, dar rămân în graficele deja salvate.
+</MudText>
+
+@code {
+    private List<EmployeeEntity> employees = [];
+    private string newName = "";
+    private StaffCategory newCategory = StaffCategory.Asistent;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        employees = await db.Employees.AsNoTracking()
+            .OrderBy(e => e.Category).ThenBy(e => e.SortOrder).ThenBy(e => e.Name).ToListAsync();
+    }
+
+    private async Task AddAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var order = employees.Where(e => e.Category == newCategory).Select(e => e.SortOrder).DefaultIfEmpty(0).Max() + 1;
+        db.Employees.Add(new EmployeeEntity { Name = newName.Trim(), Category = newCategory, SortOrder = order });
+        await db.SaveChangesAsync();
+        Snackbar.Add($"{newName} a fost adăugat(ă)", Severity.Success);
+        newName = "";
+        await LoadAsync();
+    }
+
+    private async Task SaveAsync(EmployeeEntity e)
+    {
+        if (string.IsNullOrWhiteSpace(e.Name)) { Snackbar.Add("Numele nu poate fi gol", Severity.Warning); return; }
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Employees.Update(e);
+        await db.SaveChangesAsync();
+        Snackbar.Add("Salvat", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(EmployeeEntity e)
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync("Ștergere angajat",
+            $"Ștergeți definitiv pe {e.Name}? Se șterg și concediile și turele din graficele salvate. Pentru angajații plecați folosiți „Activ” = nu.",
+            yesText: "Șterge", cancelText: "Renunță");
+        if (ok != true) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.Employees.Remove(new EmployeeEntity { Id = e.Id });
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}
