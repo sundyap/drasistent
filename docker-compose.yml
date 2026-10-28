@@ -1,9 +1,9 @@
-# Proiect pentru Arcane. Conexiunea la SQL Server se da complet prin DB_CONNECTION.
+﻿# Proiect pentru Arcane. Conexiunea la SQL Server se da complet prin DB_CONNECTION.
 # Variabilele se completeaza in Arcane (fisierul .env al proiectului) - vezi .env.example.
 services:
   drasistent:
     # imaginea construita de GitHub Actions (vezi README) sau local cu: docker build -t drasistent:latest .
-    image: ${IMAGE:-drasistent:latest}
+    image: ${IMAGE:-ghcr.io/sundyap/drasistent:latest}
     container_name: drasistent
     restart: unless-stopped
     environment:

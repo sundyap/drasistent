@@ -1,14 +1,10 @@
 # syntax=docker/dockerfile:1
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-COPY drAsistent.sln ./
-COPY src/DrAsistent.Core/DrAsistent.Core.csproj src/DrAsistent.Core/
-COPY src/DrAsistent.Solver/DrAsistent.Solver.csproj src/DrAsistent.Solver/
-COPY src/DrAsistent.Data/DrAsistent.Data.csproj src/DrAsistent.Data/
-COPY src/DrAsistent.Export/DrAsistent.Export.csproj src/DrAsistent.Export/
-COPY src/DrAsistent.Web/DrAsistent.Web.csproj src/DrAsistent.Web/
-RUN dotnet restore src/DrAsistent.Web/DrAsistent.Web.csproj -r linux-x64
+# Restore dupa copierea surselor: in .NET 10 scriptul Blazor (_framework/blazor.web.js) se adauga
+# la restore doar daca proiectul contine deja componentele .razor
 COPY src/ src/
+RUN dotnet restore src/DrAsistent.Web/DrAsistent.Web.csproj -r linux-x64
 RUN dotnet publish src/DrAsistent.Web/DrAsistent.Web.csproj -c Release -r linux-x64 --self-contained false --no-restore -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
